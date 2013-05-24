@@ -137,34 +137,37 @@ def main():
     lock = RLock()
 
     def fileworker():
-        filename = filenames.get()
-        for line_number, _ in gen_undocumented_public_methods(filename):
-            lines.put((filename, line_number))
-        filenames.task_done()
+        while True:
+            filename = filenames.get()
+            for line_number, _ in gen_undocumented_public_methods(filename):
+                lines.put((filename, line_number))
+            filenames.task_done()
 
     def blameworker():
-        filename, line_number = lines.get()
-        blame = get_blame(filename, line_number)
-        blames.put((blame, filename, line_number))
-        lines.task_done()
+        while True:
+            filename, line_number = lines.get()
+            blame = get_blame(filename, line_number)
+            blames.put((blame, filename, line_number))
+            lines.task_done()
 
     def mailworker():
-        blame, filename, line_number = blames.get()
-        for line in blame.split("\n"):
-            match = EXTRACT_EMAIL_PATTERN.match(line)
-            if match:
-                email = match.group(1)
-                break
-        recipient, filename = email.split('@')[0], 'www' + filename[1:]
-        mail = build_email(ME, email, 'Please document your code',
-                           build_message(recipient, filename, line_number))
-        if DRY_RUN:
-            print mail.as_string()
-            print "-" * 80
-        else:
-            with lock:
-                server.sendmail(ME, [email], mail.as_string())
-        blames.task_done()
+        while True:
+            blame, filename, line_number = blames.get()
+            for line in blame.split("\n"):
+                match = EXTRACT_EMAIL_PATTERN.match(line)
+                if match:
+                    email = match.group(1)
+                    break
+            recipient, filename = email.split('@')[0], 'www' + filename[1:]
+            mail = build_email(ME, email, 'Please document your code',
+                               build_message(recipient, filename, line_number))
+            if DRY_RUN:
+                print mail.as_string()
+                print "-" * 80
+            else:
+                with lock:
+                    server.sendmail(ME, [email], mail.as_string())
+            blames.task_done()
 
     try:
         for path, dirs, files in os.walk('.'):
