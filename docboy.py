@@ -7,17 +7,24 @@ This script will:
 - Find who wrote that method
 - Email that person politely asking them to fix their code
 
+This script is multithreaded to reduce the cost of blocking operations
+over large codebases.
+
 """
 import os
 import re
 import smtplib
 import subprocess
 from email.mime.text import MIMEText
+from Queue import Queue
+from threading import Thread, RLock
 
 
 ME = "ceasar@fb.com"
 COMMENT_END = "*/"
 EXTRACT_EMAIL_PATTERN = re.compile(r"^author-mail <(.+)>$")
+
+_NUM_WORKER_THREADS = 4
 
 
 def _raw_run(args, log_output=False):
@@ -29,7 +36,6 @@ def _raw_run(args, log_output=False):
 
 def blame(filename, line_number, local_path="."):
     """Get the email of the person responsible for the given line."""
-    print "blaming %s %s" % (filename, line_number)
     args = [
         "git",
         "blame",
@@ -107,30 +113,60 @@ def build_message(recipient, filename, line_number):
 
 
 def main():
-    """Email all the people who have undocumented code."""
     try:
         server = smtplib.SMTP('localhost')
     except:
         server = smtplib.SMTP('localhost', 1025)
+
+    emails = Queue()
+    blames = Queue()
+    filenames = Queue()
+    lock = RLock()
+
+    def fileworker():
+        filename = filenames.get()
+        for line_number, _ in get_undocumented_public_methods(filename):
+            blames.put((filename, line_number))
+        filenames.task_done()
+
+    def blameworker():
+        filename, line_number = blames.get()
+        email = blame(filename, line_number)
+        emails.put((email, line_number))
+        blames.task_done()
+
+    def mailworker():
+        email, line_number = emails.get()
+        mail = build_email(ME, email, 'Please document your code',
+                           build_message(email, filename, line_number))
+        msg = mail.as_string()
+        with lock:
+            server.sendmail(ME, [email], msg)
+        emails.task_done()
+
     try:
         for path, dirs, files in os.walk('.'):
             for file in files:
                 filename = os.path.join(path, file)
                 if filename.endswith(".php"):
-                    print filename
-                    for line_number, line in get_undocumented_public_methods(filename):
-                        email = blame(filename, line_number)
-                        mail = build_email(ME, email, 'Please document your code', build_message(email, filename, line_number))
-                        server.sendmail(ME, [email], mail.as_string())
+                    filenames.put(filename)
+        for _ in range(_NUM_WORKER_THREADS):
+            t = Thread(target=fileworker)
+            t.daemon = True
+            t.start()
+        for _ in range(_NUM_WORKER_THREADS):
+            t = Thread(target=blameworker)
+            t.daemon = True
+            t.start()
+        for _ in range(_NUM_WORKER_THREADS):
+            t = Thread(target=mailworker)
+            t.daemon = True
+            t.start()
+        filenames.join()
+        blames.join()
+        emails.join()
     finally:
         server.quit()
 
-
 if __name__ == "__main__":
-    import sys
-    try:
-        filename = sys.argv[1]
-    except IndexError:
-        main()
-    else:
-        email_from_file(filename)
+    main()
