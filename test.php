@@ -1,6 +1,6 @@
 <?php
 class Enum {
-    protected $self = array();
+    public $self = array();
     public function __construct( /*...*/ ) {
         $args = func_get_args();
         for( $i=0, $n=count($args); $i<$n; $i++ )

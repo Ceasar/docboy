@@ -23,6 +23,9 @@ from email.mime.text import MIMEText
 from Queue import Queue
 from threading import Thread, RLock
 
+# Whether or not to actually send emails
+DRY_RUN = False
+
 # Delimiter used to detect whether or not a method is commented
 COMMENT_END = "*/"
 
@@ -74,10 +77,12 @@ def gen_undocumented_public_methods(filename):
             if stripped == COMMENT_END:
                 has_comment = True
             else:
-                tokens = stripped.split()
-                if len(tokens) > 0 and tokens[0] == "public":
-                    if not has_comment:
-                        yield linenum, line
+                if not has_comment:
+                    tokens = stripped.split()
+                    if len(tokens) > 0 and tokens[0] == "public":
+                        if "function" in tokens:
+                            if not any(t.startswith("__") for t in tokens):
+                                yield linenum, line
                 has_comment = False
 
 
@@ -153,8 +158,12 @@ def main():
         recipient, filename = email.split('@')[0], 'www' + filename[1:]
         mail = build_email(ME, email, 'Please document your code',
                            build_message(recipient, filename, line_number))
-        with lock:
-            server.sendmail(ME, [email], mail.as_string())
+        if DRY_RUN:
+            print mail.as_string()
+            print "-" * 80
+        else:
+            with lock:
+                server.sendmail(ME, [email], mail.as_string())
         blames.task_done()
 
     try:
