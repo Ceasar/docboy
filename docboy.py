@@ -59,7 +59,7 @@ def get_blame(filename, line_number, local_path="."):
         return blame
 
 
-def get_undocumented_public_methods(filename):
+def gen_undocumented_public_methods(filename):
     """Find all undocumented public methods in class.
 
     A method is considered documented if the line preceding the definition
@@ -69,16 +69,14 @@ def get_undocumented_public_methods(filename):
     """
     has_comment = False
     with open(filename) as f:
-        lines = enumerate(f.readlines())
-        for linenum, line in lines:
-            if line.strip() == COMMENT_END:
+        for linenum, line in enumerate(f):
+            stripped = line.strip()
+            if stripped == COMMENT_END:
                 has_comment = True
             else:
-                tokens = line.strip().split()
+                tokens = stripped.split()
                 if len(tokens) > 0 and tokens[0] == "public":
-                    if has_comment:
-                        pass
-                    else:
+                    if not has_comment:
                         yield linenum, line
                 has_comment = False
 
@@ -98,11 +96,9 @@ def build_email(me, you, subject, body):
     return msg
 
 
-def build_message(recipient, filename, line_number):
+def build_message(recipient_name, filename, line_number):
     """Build a polite message requesting documentation."""
-    username = recipient.split('@')[0]
-    # subject = "Please document your code"
-    body = """
+    return """
     Hi %s,
 
     You are receiving this email because the function declared in %s, line number %s, needs documentation. (see: https://phabricator.fb.com/diffusion/E/browse/tfb/trunk/%s)
@@ -111,8 +107,7 @@ def build_message(recipient, filename, line_number):
 
     Sincerely,
     Ceasar Bautista
-    """ % (username, filename, line_number, filename)
-    return body
+    """ % (recipient_name, filename, line_number, filename)
 
 
 def _start_daemons(target, count):
@@ -138,7 +133,7 @@ def main():
 
     def fileworker():
         filename = filenames.get()
-        for line_number, _ in get_undocumented_public_methods(filename):
+        for line_number, _ in gen_undocumented_public_methods(filename):
             lines.put((filename, line_number))
         filenames.task_done()
 
@@ -155,12 +150,11 @@ def main():
             if match:
                 email = match.group(1)
                 break
-        filename = 'www' + filename[1:]
+        recipient, filename = email.split('@')[0], 'www' + filename[1:]
         mail = build_email(ME, email, 'Please document your code',
-                           build_message(email, filename, line_number))
-        msg = mail.as_string()
+                           build_message(recipient, filename, line_number))
         with lock:
-            server.sendmail(ME, [email], msg)
+            server.sendmail(ME, [email], mail.as_string())
         blames.task_done()
 
     try:
